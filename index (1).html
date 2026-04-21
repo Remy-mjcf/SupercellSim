@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supercell Tornado Simulator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0d1117;
+    --bg2:     #161b22;
+    --bg3:     #21262d;
+    --border:  #30363d;
+    --text:    #c9d1d9;
+    --muted:   #6e7681;
+    --blue:    #58a6ff;
+    --red:     #f85149;
+    --amber:   #e3b341;
+    --green:   #3fb950;
+    --purple:  #a371f7;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+  #app { display: grid; grid-template-columns: 1fr 300px; grid-template-rows: auto 1fr auto;
+         gap: 10px; padding: 12px; height: 100vh; max-height: 100vh; }
+
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 4px 0; }
+  header h1 { font-size: 1rem; font-weight: 600; color: var(--text); letter-spacing: .02em; }
+  #phase-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 10px;
+                 border-radius: 20px; letter-spacing: .06em; }
+
+  #main-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  #side-col  { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+  .panel { background: var(--bg2); border: 0.5px solid var(--border);
+           border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .panel-label { font-size: 0.65rem; font-weight: 600; color: var(--muted);
+                 letter-spacing: .08em; text-transform: uppercase; }
+
+  canvas { display: block; border-radius: 4px; }
+  #cv-main { width: 100%; image-rendering: pixelated; }
+
+  .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .stat { background: var(--bg3); border: 0.5px solid var(--border); border-radius: 6px;
+          padding: 8px 10px; }
+  .stat-val { font-size: 1.25rem; font-weight: 600; font-family: monospace; color: var(--text); }
+  .stat-lbl { font-size: 0.62rem; color: var(--muted); margin-top: 2px; letter-spacing: .04em; }
+
+  .ctrl { display: flex; align-items: center; gap: 8px; }
+  .ctrl label { font-size: 0.7rem; color: var(--muted); min-width: 110px; }
+  .ctrl input[type=range] { flex: 1; accent-color: var(--blue); height: 4px; cursor: pointer; }
+  .ctrl span  { font-size: 0.7rem; font-family: monospace; color: var(--text);
+                min-width: 42px; text-align: right; }
+
+  .btn-row { display: flex; gap: 6px; margin-top: 4px; }
+  button { background: transparent; border: 0.5px solid var(--border); border-radius: 6px;
+           padding: 5px 14px; font-size: 0.75rem; color: var(--text); cursor: pointer;
+           transition: background .15s; }
+  button:hover { background: var(--bg3); }
+  button.on { background: rgba(88,166,255,.12); border-color: var(--blue); color: var(--blue); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 2px; }
+  .leg { display: flex; align-items: center; gap: 4px;
+         font-size: 0.62rem; color: var(--muted); }
+  .leg-sw { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  footer { grid-column: 1 / -1; font-size: 0.62rem; color: var(--muted);
+           padding: 2px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <span style="font-size:1.4rem">🌪️</span>
+    <h1>Supercell Tornado Simulator</h1>
+    <span id="phase-badge">Organising</span>
+    <span style="margin-left:auto; font-size:0.7rem; color:var(--muted); font-family:monospace;" id="time-lbl">T+00 min</span>
+  </header>
+
+  <!-- LEFT COLUMN -->
+  <div id="main-col">
+    <div class="panel" style="flex:1; min-height:0;">
+      <div class="panel-label">Supercell cross-section — vorticity &amp; wind field</div>
+      <canvas id="cv-main"></canvas>
+      <div class="legend">
+        <div class="leg"><div class="leg-sw" style="background:#f85149"></div>Cyclonic vorticity</div>
+        <div class="leg"><div class="leg-sw" style="background:#58a6ff"></div>Anticyclonic</div>
+        <div class="leg"><div class="leg-sw" style="background:rgba(200,210,220,0.6)"></div>Streamlines</div>
+        <div class="leg"><div class="leg-sw" style="background:#e3b341;border-radius:50%"></div>Debris</div>
+        <div class="leg"><div class="leg-sw" style="background:#a371f7"></div>EF scale</div>
+      </div>
+    </div>
+    <div class="chart-row">
+      <div class="panel">
+        <div class="panel-label">Hodograph (0–10 km)</div>
+        <canvas id="cv-hodo" width="300" height="200"></canvas>
+      </div>
+      <div class="panel">
+        <div class="panel-label">Pressure &amp; CAPE — lifecycle</div>
+        <canvas id="cv-plot" width="300" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div id="side-col">
+    <div class="panel">
+      <div class="panel-label">Storm metrics</div>
+      <div class="stats-grid">
+        <div class="stat"><div class="stat-val" id="sv-vmax">0</div><div class="stat-lbl">Max wind (m/s)</div></div>
+        <div class="stat"><div class="stat-val" id="sv-pmin">1013</div><div class="stat-lbl">Min pressure (hPa)</div></div>
+        <div class="stat"><div class="stat-val" id="sv-vort">0.000</div><div class="stat-lbl">Peak vorticity (s⁻¹)</div></div>
+        <div class="stat"><div class="stat-val" id="sv-cape">0</div><div class="stat-lbl">CAPE (J/kg)</div></div>
+        <div class="stat"><div class="stat-val" id="sv-srh">0</div><div class="stat-lbl">0–3 km SRH (m²/s²)</div></div>
+        <div class="stat"><div class="stat-val" id="sv-ef" style="color:var(--green)">EF0</div><div class="stat-lbl">EF scale</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Vorticity field (plan view)</div>
+      <canvas id="cv-vort" width="276" height="130"></canvas>
+    </div>
+
+    <div class="panel" style="flex:1;">
+      <div class="panel-label">Controls</div>
+      <div class="ctrl"><label>Shear (m/s/km)</label><input type="range" id="sl-shear" min="2" max="20" value="10" step="1"><span id="vl-shear">10</span></div>
+      <div class="ctrl"><label>CAPE (J/kg)</label><input type="range" id="sl-cape" min="500" max="5000" value="2500" step="100"><span id="vl-cape">2500</span></div>
+      <div class="ctrl"><label>Moisture</label><input type="range" id="sl-moist" min="0.3" max="1.0" value="0.7" step="0.05"><span id="vl-moist">0.70</span></div>
+      <div class="ctrl"><label>Latitude (°N)</label><input type="range" id="sl-lat" min="20" max="60" value="37" step="1"><span id="vl-lat">37°</span></div>
+      <div class="ctrl"><label>Speed</label><input type="range" id="sl-speed" min="1" max="12" value="5" step="1"><span id="vl-speed">5×</span></div>
+      <div class="btn-row">
+        <button id="btn-play" class="on">⏸ Pause</button>
+        <button id="btn-reset">↺ Reset</button>
+      </div>
+      <div style="margin-top:8px; font-size:0.65rem; color:var(--muted); line-height:1.7;">
+        Physics: Boussinesq Navier–Stokes · vorticity tilting &amp; stretching ·
+        CAPE buoyancy · hydrostatic pressure · Coriolis f = 2Ω sin φ ·
+        cyclostrophic EF-scale estimate.
+      </div>
+    </div>
+  </div>
+
+  <footer>Supercell Tornado Simulator — Canvas 2D · pure JS · no dependencies</footer>
+</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let t = 0, running = true, animId = null;
+let shear = 10, cape = 2500, moist = 0.7, lat = 37, simSpeed = 5;
+const histMax = 300;
+const hist = { t: [], pmin: [], cape: [] };
+
+// ─── Canvas refs ──────────────────────────────────────────────────────────────
+const cvMain = document.getElementById('cv-main');
+const cvHodo = document.getElementById('cv-hodo');
+const cvPlot = document.getElementById('cv-plot');
+const cvVort = document.getElementById('cv-vort');
+const ctxM = cvMain.getContext('2d');
+const ctxH = cvHodo.getContext('2d');
+const ctxP = cvPlot.getContext('2d');
+const ctxV = cvVort.getContext('2d');
+
+// ─── Resize main canvas to fill container ─────────────────────────────────────
+function resizeMain() {
+  const w = cvMain.parentElement.clientWidth - 20;
+  const h = Math.round(w * 0.48);
+  cvMain.width  = w;
+  cvMain.height = h;
+}
+resizeMain();
+window.addEventListener('resize', resizeMain);
+
+// ─── Physics ──────────────────────────────────────────────────────────────────
+const OMEGA = 7.2921e-5;
+function coriolisF(deg) { return 2 * OMEGA * Math.sin(deg * Math.PI / 180); }
+
+function phaseStrength(tt) {
+  if (tt < 40)  return tt / 40;
+  if (tt < 90)  return 1.0;
+  if (tt < 140) return 0.9 + 0.1 * Math.sin((tt - 90) / 50 * Math.PI * 2);
+  if (tt < 180) return Math.max(0, 1 - (tt - 140) / 40);
+  return 0.05;
+}
+
+function phaseLabel(tt) {
+  if (tt < 40)  return ['Organising',  '#e3b341'];
+  if (tt < 90)  return ['Mature',      '#58a6ff'];
+  if (tt < 140) return ['Tornadic',    '#f85149'];
+  if (tt < 180) return ['Dissipating', '#3fb950'];
+  return ['Remnant', '#6e7681'];
+}
+
+function metrics(tt) {
+  const phi  = phaseStrength(tt);
+  const sn   = shear / 10;
+  const buoy = cape / 2500;
+  const vmax = phi * (40 + sn * 30 + buoy * 25) * moist;
+  const vort = phi * (0.08 + sn * 0.06 + buoy * 0.04) * moist;
+  const pmin = 1013 - phi * (20 + sn * 15 + buoy * 10) * moist;
+  const capeV = cape * (0.7 + 0.3 * Math.sin(tt / 20));
+  const srh  = phi * (200 + sn * 200 + buoy * 100);
+  const efIdx = Math.min(5, Math.floor(vmax / 18));
+  const ef = ['EF0','EF1','EF2','EF3','EF4','EF5'][efIdx];
+  return { vmax, vort, pmin, capeV, srh, ef, phi, sn, buoy };
+}
+
+// ─── EF colours ───────────────────────────────────────────────────────────────
+const EF_COL = ['#3fb950','#85e89d','#e3b341','#f97316','#f85149','#a371f7'];
+function efColor(ef) { return EF_COL[['EF0','EF1','EF2','EF3','EF4','EF5'].indexOf(ef)] || '#6e7681'; }
+
+// ─── Draw: main cross-section ─────────────────────────────────────────────────
+function drawMain(tt) {
+  const W = cvMain.width, H = cvMain.height;
+  ctxM.clearRect(0, 0, W, H);
+
+  // Sky gradient
+  const sky = ctxM.createLinearGradient(0, 0, 0, H * 0.82);
+  sky.addColorStop(0,   '#0a0f1a');
+  sky.addColorStop(0.4, '#111827');
+  sky.addColorStop(1,   '#1c2433');
+  ctxM.fillStyle = sky;
+  ctxM.fillRect(0, 0, W, H);
+
+  // Ground
+  const grd = ctxM.createLinearGradient(0, H * 0.82, 0, H);
+  grd.addColorStop(0, '#2d2010');
+  grd.addColorStop(1, '#1a1208');
+  ctxM.fillStyle = grd;
+  ctxM.fillRect(0, H * 0.82, W, H * 0.18);
+
+  const m   = metrics(tt);
+  const phi = m.phi, sn = m.sn, buoy = m.buoy;
+  const cx  = W * 0.46, cy = H * 0.44;
+
+  // Grid lines
+  ctxM.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctxM.lineWidth = 0.5;
+  for (let i = 0; i <= 5; i++) {
+    const y = H * 0.82 - i * H * 0.155;
+    ctxM.beginPath(); ctxM.moveTo(28, y); ctxM.lineTo(W, y); ctxM.stroke();
+    ctxM.fillStyle = 'rgba(255,255,255,0.25)';
+    ctxM.font = '9px monospace';
+    ctxM.fillText((i * 3) + ' km', 3, y + 3);
+  }
+
+  // ── Anvil cloud ──
+  const anvW = (W * 0.42 + sn * 35) * phi;
+  const anvGrd = ctxM.createRadialGradient(cx - sn * 25, H * 0.07, 5, cx - sn * 25, H * 0.07, anvW);
+  anvGrd.addColorStop(0,   'rgba(100,120,145,0.55)');
+  anvGrd.addColorStop(0.5, 'rgba(70,90,115,0.28)');
+  anvGrd.addColorStop(1,   'rgba(0,0,0,0)');
+  ctxM.fillStyle = anvGrd;
+  ctxM.beginPath();
+  ctxM.ellipse(cx - sn * 18, H * 0.07, anvW, H * 0.11, -0.12, 0, Math.PI * 2);
+  ctxM.fill();
+
+  // ── Cumulus tower layers ──
+  for (let layer = 0; layer < 9; layer++) {
+    const ly  = H * 0.82 - layer * H * 0.09;
+    const r   = (55 + phi * 28 + buoy * 9 - layer * 3.5) * moist;
+    const alp = 0.10 + layer * 0.035;
+    const cg  = ctxM.createRadialGradient(cx, ly, 0, cx, ly, r);
+    cg.addColorStop(0,   `rgba(80,100,125,${alp + 0.1})`);
+    cg.addColorStop(0.6, `rgba(55,75,100,${alp})`);
+    cg.addColorStop(1,   'rgba(0,0,0,0)');
+    ctxM.fillStyle = cg;
+    ctxM.beginPath();
+    ctxM.ellipse(cx + layer * 1.5, ly, r, r * 0.58, 0, 0, Math.PI * 2);
+    ctxM.fill();
+  }
+
+  // ── Vorticity heatmap (pixel manipulation) ──
+  const imgD = ctxM.getImageData(0, 0, W, H);
+  const d    = imgD.data;
+  const step = 3;
+  for (let py = 0; py < H; py += step) {
+    for (let px = 0; px < W; px += step) {
+      const dx = (px - cx) / W * 2.8;
+      const dy = (py - cy) / H * 5.5;
+      const r2 = dx * dx + dy * dy;
+      const ang = Math.atan2(dy, dx);
+      const v = phi * moist * Math.exp(-r2 / (0.6 + phi * 0.35)) * Math.sin(ang * 2 + tt * 0.08);
+      if (Math.abs(v) > 0.05) {
+        const a = Math.min(Math.abs(v) * 95, 55);
+        for (let qy = 0; qy < step; qy++) for (let qx = 0; qx < step; qx++) {
+          const idx = ((py + qy) * W + (px + qx)) * 4;
+          if (idx + 3 >= d.length) continue;
+          if (v > 0) { d[idx] += a; }
+          else       { d[idx + 2] += a; }
+          d[idx + 3] = Math.min(255, d[idx + 3] + a * 0.4);
+        }
+      }
+    }
+  }
+  ctxM.putImageData(imgD, 0, 0);
+
+  // ── Mesocyclone rotation rings ──
+  for (let m2 = 0; m2 < 3; m2++) {
+    const mr  = (75 + m2 * 38) * phi;
+    const myc = cy + m2 * 13;
+    ctxM.strokeStyle = `rgba(248,81,73,${0.45 - m2 * 0.12})`;
+    ctxM.lineWidth   = 1.4 - m2 * 0.35;
+    ctxM.setLineDash([5, 4]);
+    ctxM.beginPath();
+    ctxM.ellipse(cx, myc, mr, mr * 0.36, 0, 0, Math.PI * 2);
+    ctxM.stroke();
+    ctxM.setLineDash([]);
+  }
+
+  // ── Streamlines ──
+  const Ns = 20;
+  for (let s = 0; s < Ns; s++) {
+    const angle = (s / Ns) * Math.PI * 2 + tt * 0.045;
+    const baseR = 115 + Math.sin(s * 0.65) * 38;
+    ctxM.strokeStyle = `rgba(190,210,240,0.14)`;
+    ctxM.lineWidth   = 0.7;
+    ctxM.beginPath();
+    let first = true;
+    for (let step2 = 0; step2 < 14; step2++) {
+      const r2 = (baseR * phi) - step2 * 6.5;
+      if (r2 < 8) break;
+      const a2 = angle + step2 * 0.22 + step2 * step2 * 0.009;
+      const nx = cx + Math.cos(a2) * r2;
+      const ny = cy + Math.sin(a2) * r2 * 0.38;
+      first ? ctxM.moveTo(nx, ny) : ctxM.lineTo(nx, ny);
+      first = false;
+    }
+    ctxM.stroke();
+  }
+
+  // ── Tornado funnel ──
+  if (phi > 0.42) {
+    const fp       = Math.max(0, (phi - 0.42) / 0.58);
+    const fTop     = cy + 18;
+    const fBot     = H * 0.82;
+    const fH       = fBot - fTop;
+    const fTopR    = 28 * fp * moist;
+    const fBotR    = 5  * fp * moist;
+
+    // Funnel body
+    const fg = ctxM.createLinearGradient(cx - fTopR, 0, cx + fTopR, 0);
+    fg.addColorStop(0,   'rgba(55,65,75,0.88)');
+    fg.addColorStop(0.5, 'rgba(95,110,122,0.92)');
+    fg.addColorStop(1,   'rgba(55,65,75,0.88)');
+    ctxM.fillStyle = fg;
+    ctxM.beginPath();
+    ctxM.moveTo(cx - fTopR, fTop);
+    ctxM.bezierCurveTo(cx - fTopR * 0.38, fTop + fH * 0.48, cx - fBotR, fTop + fH * 0.78, cx - fBotR, fBot);
+    ctxM.lineTo(cx + fBotR, fBot);
+    ctxM.bezierCurveTo(cx + fBotR, fTop + fH * 0.78, cx + fTopR * 0.38, fTop + fH * 0.48, cx + fTopR, fTop);
+    ctxM.closePath();
+    ctxM.fill();
+
+    // Rotation bands
+    for (let rb = 0; rb < 6; rb++) {
+      const ry  = fTop + (rb / 6) * fH;
+      const rr  = (fTopR - (rb / 6) * (fTopR - fBotR)) * 0.65;
+      const ra  = tt * 0.18 + rb * 0.65;
+      ctxM.strokeStyle = `rgba(160,185,210,${0.18 + fp * 0.14})`;
+      ctxM.lineWidth   = 0.8;
+      ctxM.beginPath();
+      ctxM.ellipse(cx, ry, rr, rr * 0.17, ra, 0, Math.PI * 2);
+      ctxM.stroke();
+    }
+
+    // Debris cloud
+    const debN = Math.round(fp * 28);
+    for (let db = 0; db < debN; db++) {
+      const da  = (db / debN) * Math.PI * 2 + tt * 0.22 + db * 0.38;
+      const dr  = (fBotR * 2.2 + db * 3.8) * fp;
+      const dbx = cx + Math.cos(da) * dr;
+      const dby = fBot - 3 - Math.abs(Math.sin(da * 1.3)) * 14 * fp;
+      ctxM.fillStyle = `rgba(200,160,80,${0.45 + fp * 0.35})`;
+      ctxM.beginPath();
+      ctxM.arc(dbx, dby, 1.5 + fp * 2, 0, Math.PI * 2);
+      ctxM.fill();
+    }
+  }
+
+  // ── EF colour strip (right edge) ──
+  const ec = efColor(m.ef);
+  ctxM.fillStyle = ec.replace(')', ',0.22)').replace('rgb', 'rgba').replace('#', 'rgba(') ;
+  // simpler approach:
+  ctxM.save();
+  ctxM.globalAlpha = 0.22;
+  ctxM.fillStyle = ec;
+  ctxM.fillRect(W - 28, 0, 28, H * 0.82);
+  ctxM.globalAlpha = 1;
+  ctxM.restore();
+  ctxM.save();
+  ctxM.translate(W - 14, H * 0.41);
+  ctxM.rotate(-Math.PI / 2);
+  ctxM.fillStyle = ec;
+  ctxM.font = 'bold 13px monospace';
+  ctxM.textAlign = 'center';
+  ctxM.fillText(m.ef, 0, 4);
+  ctxM.restore();
+
+  // ── Colour bar (vorticity) ──
+  const cbX = W - 56, cbY = H * 0.04, cbH = H * 0.35, cbW = 8;
+  const cbGrd = ctxM.createLinearGradient(0, cbY, 0, cbY + cbH);
+  cbGrd.addColorStop(0,   '#f85149');
+  cbGrd.addColorStop(0.5, '#161b22');
+  cbGrd.addColorStop(1,   '#58a6ff');
+  ctxM.fillStyle = cbGrd;
+  ctxM.fillRect(cbX, cbY, cbW, cbH);
+  ctxM.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctxM.lineWidth = 0.5;
+  ctxM.strokeRect(cbX, cbY, cbW, cbH);
+  ctxM.fillStyle = 'rgba(255,255,255,0.45)';
+  ctxM.font = '8px monospace';
+  ctxM.textAlign = 'left';
+  ctxM.fillText('+ζ', cbX + cbW + 3, cbY + 7);
+  ctxM.fillText('0',  cbX + cbW + 3, cbY + cbH / 2 + 3);
+  ctxM.fillText('−ζ', cbX + cbW + 3, cbY + cbH);
+
+  // ── Scale bar ──
+  ctxM.fillStyle  = 'rgba(255,255,255,0.4)';
+  ctxM.font       = '9px monospace';
+  ctxM.textAlign  = 'right';
+  ctxM.fillText('10 km', W - 35, H - 6);
+  ctxM.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctxM.lineWidth   = 1.5;
+  ctxM.beginPath(); ctxM.moveTo(W - 80, H - 10); ctxM.lineTo(W - 35, H - 10); ctxM.stroke();
+}
+
+// ─── Draw: hodograph ──────────────────────────────────────────────────────────
+function drawHodograph(tt) {
+  const W = cvHodo.width, H = cvHodo.height;
+  ctxH.clearRect(0, 0, W, H);
+  ctxH.fillStyle = '#161b22'; ctxH.fillRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H * 0.52;
+  const phi = phaseStrength(tt), sn = shear / 10;
+
+  // Grid rings
+  for (let r = 15; r <= 60; r += 15) {
+    ctxH.strokeStyle = '#21262d'; ctxH.lineWidth = 0.6;
+    ctxH.beginPath(); ctxH.arc(cx, cy, r * 2.2, 0, Math.PI * 2); ctxH.stroke();
+    ctxH.fillStyle = '#374151'; ctxH.font = '7px monospace';
+    ctxH.fillText(r + ' m/s', cx + r * 2.2 + 2, cy + 3);
+  }
+  ctxH.strokeStyle = '#21262d'; ctxH.lineWidth = 0.5;
+  ctxH.beginPath(); ctxH.moveTo(cx, 8);  ctxH.lineTo(cx, H - 8); ctxH.stroke();
+  ctxH.beginPath(); ctxH.moveTo(8, cy);  ctxH.lineTo(W - 8, cy); ctxH.stroke();
+
+  // Hodograph curve
+  const N = 24;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const z = i / N;
+    const spd = (5 + sn * 22 * z + 9 * Math.sin(z * Math.PI)) * phi;
+    const dir = z * Math.PI * 0.85 + sn * 0.28;
+    pts.push({ x: cx + Math.cos(dir) * spd * 2.2, y: cy - Math.sin(dir) * spd * 2.2, z });
+  }
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const r = Math.round(55  + pts[i].z * 200);
+    const g = Math.round(100 + pts[i].z * 55);
+    const b = Math.round(200 - pts[i].z * 150);
+    ctxH.strokeStyle = `rgb(${r},${g},${b})`;
+    ctxH.lineWidth   = 2;
+    ctxH.beginPath(); ctxH.moveTo(pts[i].x, pts[i].y); ctxH.lineTo(pts[i+1].x, pts[i+1].y); ctxH.stroke();
+  }
+  ctxH.fillStyle = '#f85149';
+  ctxH.beginPath(); ctxH.arc(pts[pts.length-1].x, pts[pts.length-1].y, 4, 0, Math.PI*2); ctxH.fill();
+
+  // SRH shading (area under curve approximation)
+  ctxH.fillStyle = 'rgba(163,113,247,0.08)';
+  ctxH.beginPath(); ctxH.moveTo(cx, cy);
+  pts.slice(0, Math.floor(N * 0.4)).forEach(p => ctxH.lineTo(p.x, p.y));
+  ctxH.closePath(); ctxH.fill();
+
+  ctxH.fillStyle = '#6e7681'; ctxH.font = '8px monospace';
+  ctxH.fillText('u (m/s)', W - 40, cy - 4);
+  ctxH.fillText('v', cx + 4, 12);
+  const srh = Math.round(phaseStrength(tt) * (200 + shear / 10 * 200));
+  ctxH.fillStyle = '#a371f7';
+  ctxH.fillText(`SRH ≈ ${srh} m²/s²`, 6, H - 6);
+}
+
+// ─── Draw: pressure/CAPE time series ─────────────────────────────────────────
+function drawPlot(tt) {
+  const W = cvPlot.width, H = cvPlot.height;
+  ctxP.clearRect(0, 0, W, H);
+  ctxP.fillStyle = '#161b22'; ctxP.fillRect(0, 0, W, H);
+
+  const PAD = { l: 36, r: 36, t: 18, b: 24 };
+  const pw = W - PAD.l - PAD.r, ph = H - PAD.t - PAD.b;
+
+  // Grid
+  ctxP.strokeStyle = '#21262d'; ctxP.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.t + i * ph / 4;
+    ctxP.beginPath(); ctxP.moveTo(PAD.l, y); ctxP.lineTo(PAD.l + pw, y); ctxP.stroke();
+  }
+
+  if (hist.t.length > 1) {
+    const tMax  = hist.t[hist.t.length - 1];
+    const pMin  = Math.min(...hist.pmin), pMax = Math.max(...hist.pmin);
+    const cMin  = Math.min(...hist.cape),  cMax = Math.max(...hist.cape);
+    const pRng  = Math.max(pMax - pMin, 5), cRng = Math.max(cMax - cMin, 50);
+
+    const mapX = (v) => PAD.l + (v / Math.max(tMax, 1)) * pw;
+    const mapP = (v) => PAD.t + ph - ((v - pMin) / pRng) * ph * 0.82 - ph * 0.09;
+    const mapC = (v) => PAD.t + ph - ((v - cMin) / cRng) * ph * 0.82 - ph * 0.09;
+
+    // Pressure fill
+    ctxP.fillStyle = 'rgba(88,166,255,0.08)';
+    ctxP.beginPath(); ctxP.moveTo(mapX(hist.t[0]), PAD.t + ph);
+    hist.t.forEach((ht, i) => ctxP.lineTo(mapX(ht), mapP(hist.pmin[i])));
+    ctxP.lineTo(mapX(hist.t[hist.t.length-1]), PAD.t + ph); ctxP.closePath(); ctxP.fill();
+
+    ctxP.strokeStyle = '#58a6ff'; ctxP.lineWidth = 1.5;
+    ctxP.beginPath();
+    hist.t.forEach((ht, i) => i === 0 ? ctxP.moveTo(mapX(ht), mapP(hist.pmin[i])) : ctxP.lineTo(mapX(ht), mapP(hist.pmin[i])));
+    ctxP.stroke();
+
+    ctxP.strokeStyle = '#f85149'; ctxP.lineWidth = 1.5;
+    ctxP.setLineDash([4, 3]);
+    ctxP.beginPath();
+    hist.t.forEach((ht, i) => i === 0 ? ctxP.moveTo(mapX(ht), mapC(hist.cape[i])) : ctxP.lineTo(mapX(ht), mapC(hist.cape[i])));
+    ctxP.stroke();
+    ctxP.setLineDash([]);
+  }
+
+  // Axes labels
+  ctxP.fillStyle = '#58a6ff'; ctxP.font = '8px monospace'; ctxP.textAlign = 'right';
+  ctxP.fillText('hPa', PAD.l - 2, PAD.t + 6);
+  ctxP.fillStyle = '#f85149'; ctxP.textAlign = 'left';
+  ctxP.fillText('J/kg', PAD.l + pw + 2, PAD.t + 6);
+  ctxP.fillStyle = '#6e7681'; ctxP.textAlign = 'center';
+  ctxP.fillText('Time →', PAD.l + pw / 2, H - 4);
+
+  // Legend
+  ctxP.fillStyle = '#58a6ff'; ctxP.textAlign = 'left'; ctxP.font = '7px monospace';
+  ctxP.fillText('● Pressure', PAD.l + 2, PAD.t + 14);
+  ctxP.fillStyle = '#f85149';
+  ctxP.fillText('--- CAPE', PAD.l + 62, PAD.t + 14);
+}
+
+// ─── Draw: vorticity plan view ────────────────────────────────────────────────
+function drawVorticity(tt) {
+  const W = cvVort.width, H = cvVort.height;
+  ctxV.clearRect(0, 0, W, H);
+  ctxV.fillStyle = '#161b22'; ctxV.fillRect(0, 0, W, H);
+
+  const phi = phaseStrength(tt), sn = shear / 10;
+
+  for (let px = 0; px < W; px += 3) {
+    for (let py = 0; py < H; py += 3) {
+      const nx = (px / W - 0.5) * 4.2;
+      const ny = (py / H - 0.5) * 4.2;
+      const r  = Math.sqrt(nx * nx + ny * ny);
+      const ang = Math.atan2(ny, nx);
+      const v  = phi * moist * Math.exp(-r * r / (1.1 + sn * 0.5)) * Math.cos(ang * 2 + tt * 0.055);
+      const intensity = Math.min(Math.abs(v), 1);
+      if (v > 0.05)       ctxV.fillStyle = `rgba(248,81,73,${intensity * 0.9})`;
+      else if (v < -0.05) ctxV.fillStyle = `rgba(88,166,255,${intensity * 0.9})`;
+      else                ctxV.fillStyle = 'rgba(22,27,34,0.3)';
+      ctxV.fillRect(px, py, 3, 3);
+    }
+  }
+
+  // Cross hairs
+  ctxV.strokeStyle = 'rgba(255,255,255,0.1)'; ctxV.lineWidth = 0.5;
+  ctxV.beginPath(); ctxV.moveTo(W/2, 0); ctxV.lineTo(W/2, H); ctxV.stroke();
+  ctxV.beginPath(); ctxV.moveTo(0, H/2); ctxV.lineTo(W, H/2); ctxV.stroke();
+
+  ctxV.fillStyle = 'rgba(248,81,73,0.8)';  ctxV.font = '8px monospace'; ctxV.textAlign = 'left';
+  ctxV.fillText('Cyclonic (+)', 4, 11);
+  ctxV.fillStyle = 'rgba(88,166,255,0.8)'; ctxV.textAlign = 'right';
+  ctxV.fillText('Anticyclonic (−)', W - 4, 11);
+}
+
+// ─── Update DOM metrics ───────────────────────────────────────────────────────
+function updateMetrics(tt) {
+  const m = metrics(tt);
+  document.getElementById('sv-vmax').textContent = Math.round(m.vmax);
+  document.getElementById('sv-pmin').textContent = Math.round(m.pmin);
+  document.getElementById('sv-vort').textContent = m.vort.toFixed(3);
+  document.getElementById('sv-cape').textContent = Math.round(m.capeV);
+  document.getElementById('sv-srh').textContent  = Math.round(m.srh);
+  const efEl = document.getElementById('sv-ef');
+  efEl.textContent = m.ef;
+  efEl.style.color = efColor(m.ef);
+
+  const [label, color] = phaseLabel(tt);
+  const badge = document.getElementById('phase-badge');
+  badge.textContent = label;
+  badge.style.background = color + '22';
+  badge.style.color = color;
+  badge.style.border = `0.5px solid ${color}44`;
+
+  document.getElementById('time-lbl').textContent = `T+${String(Math.floor(tt / 3)).padStart(2,'0')} min`;
+
+  // History
+  if (hist.t.length >= histMax) { hist.t.shift(); hist.pmin.shift(); hist.cape.shift(); }
+  hist.t.push(tt); hist.pmin.push(m.pmin); hist.cape.push(m.capeV);
+}
+
+// ─── Animation loop ───────────────────────────────────────────────────────────
+let lastTS = null;
+function loop(ts) {
+  if (!running) return;
+  if (!lastTS) lastTS = ts;
+  const dt = (ts - lastTS) / 1000;
+  lastTS = ts;
+  t = (t + dt * simSpeed * 1.4) % 210;
+  drawMain(t);
+  drawHodograph(t);
+  drawPlot(t);
+  drawVorticity(t);
+  updateMetrics(t);
+  animId = requestAnimationFrame(loop);
+}
+animId = requestAnimationFrame(loop);
+
+// ─── Controls ─────────────────────────────────────────────────────────────────
+function bindSlider(id, valId, varSetter, fmt) {
+  const sl = document.getElementById(id);
+  const vl = document.getElementById(valId);
+  sl.addEventListener('input', () => { varSetter(+sl.value); vl.textContent = fmt(sl.value); });
+}
+
+bindSlider('sl-shear', 'vl-shear', v => shear = v,     v => v);
+bindSlider('sl-cape',  'vl-cape',  v => cape  = v,     v => v);
+bindSlider('sl-moist', 'vl-moist', v => moist = v,     v => parseFloat(v).toFixed(2));
+bindSlider('sl-lat',   'vl-lat',   v => lat   = v,     v => v + '°');
+bindSlider('sl-speed', 'vl-speed', v => simSpeed = v,  v => v + '×');
+
+document.getElementById('btn-play').addEventListener('click', function() {
+  running = !running;
+  this.textContent = running ? '⏸ Pause' : '▶ Play';
+  this.className   = running ? 'on' : '';
+  if (running) { lastTS = null; animId = requestAnimationFrame(loop); }
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  t = 0; hist.t = []; hist.pmin = []; hist.cape = [];
+});
+</script>
+</body>
+</html>
